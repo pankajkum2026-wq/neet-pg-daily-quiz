@@ -1,0 +1,273 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  student
+  faculty
+  admin
+}
+
+enum QuestionStatus {
+  draft
+  published
+  archived
+}
+
+enum QuestionDifficulty {
+  easy
+  medium
+  hard
+}
+
+enum DailyQuizStatus {
+  draft
+  published
+}
+
+enum AttemptStatus {
+  in_progress
+  completed
+  abandoned
+}
+
+enum NotificationType {
+  daily_reminder
+  streak_nudge
+  result_summary
+}
+
+enum NotificationStatus {
+  sent
+  failed
+  opened
+}
+
+model User {
+  id           String   @id @default(uuid())
+  firebaseUid  String   @unique @map("firebase_uid")
+  name         String
+  email        String?
+  phone        String?
+  role         UserRole @default(student)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  questionsCreated   Question[]              @relation("QuestionCreator")
+  dailyQuizzesCreated DailyQuiz[]            @relation("DailyQuizCreator")
+  quizAttempts       QuizAttempt[]
+  streak             UserStreak?
+  bookmarks          Bookmark[]
+  topicStats         UserTopicStat[]
+  notificationPrefs  NotificationPreference?
+  notificationLogs   NotificationLog[]
+
+  @@map("users")
+}
+
+model Subject {
+  id           String  @id @default(uuid())
+  name         String  @unique
+  slug         String  @unique
+  displayOrder Int     @default(0) @map("display_order")
+
+  topics Topic[]
+
+  @@map("subjects")
+}
+
+model Topic {
+  id        String @id @default(uuid())
+  subjectId String @map("subject_id")
+  name      String
+  slug      String
+
+  subject    Subject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  questions  Question[]
+  topicStats UserTopicStat[]
+
+  @@unique([subjectId, slug])
+  @@map("topics")
+}
+
+model Question {
+  id            String             @id @default(uuid())
+  topicId       String             @map("topic_id")
+  stem          String
+  explanation   String
+  clinicalPearl String?            @map("clinical_pearl")
+  memoryTrick   String?            @map("memory_trick")
+  difficulty    QuestionDifficulty @default(medium)
+  imageUrl      String?            @map("image_url")
+  status        QuestionStatus     @default(draft)
+  createdById   String             @map("created_by")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+
+  topic              Topic               @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  createdBy          User                @relation("QuestionCreator", fields: [createdById], references: [id])
+  options            QuestionOption[]
+  dailyQuizQuestions DailyQuizQuestion[]
+  quizAnswers        QuizAnswer[]
+  bookmarks          Bookmark[]
+
+  @@index([topicId, status])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String  @id @default(uuid())
+  questionId String  @map("question_id")
+  label      String
+  text       String
+  isCorrect  Boolean @default(false) @map("is_correct")
+
+  question    Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  quizAnswers QuizAnswer[]
+
+  @@unique([questionId, label])
+  @@map("question_options")
+}
+
+model DailyQuiz {
+  id          String          @id @default(uuid())
+  quizDate    DateTime        @unique @map("quiz_date") @db.Date
+  title       String
+  status      DailyQuizStatus @default(draft)
+  publishedAt DateTime?       @map("published_at")
+  createdById String          @map("created_by")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  createdBy User                @relation("DailyQuizCreator", fields: [createdById], references: [id])
+  questions DailyQuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([quizDate])
+  @@map("daily_quizzes")
+}
+
+model DailyQuizQuestion {
+  id          String @id @default(uuid())
+  dailyQuizId String @map("daily_quiz_id")
+  questionId  String @map("question_id")
+  position    Int
+
+  dailyQuiz DailyQuiz @relation(fields: [dailyQuizId], references: [id], onDelete: Cascade)
+  question  Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([dailyQuizId, position])
+  @@unique([dailyQuizId, questionId])
+  @@map("daily_quiz_questions")
+}
+
+model QuizAttempt {
+  id                   String        @id @default(uuid())
+  userId               String        @map("user_id")
+  dailyQuizId          String        @map("daily_quiz_id")
+  status               AttemptStatus @default(in_progress)
+  startedAt            DateTime      @default(now()) @map("started_at")
+  completedAt          DateTime?     @map("completed_at")
+  timeTakenSeconds     Int?          @map("time_taken_seconds")
+  score                Int?
+  accuracy             Decimal?      @db.Decimal(5, 2)
+  currentQuestionIndex Int           @default(0) @map("current_question_index")
+
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dailyQuiz DailyQuiz    @relation(fields: [dailyQuizId], references: [id], onDelete: Cascade)
+  answers   QuizAnswer[]
+
+  @@unique([userId, dailyQuizId])
+  @@index([userId, status, startedAt])
+  @@map("quiz_attempts")
+}
+
+model QuizAnswer {
+  id               String    @id @default(uuid())
+  attemptId        String    @map("attempt_id")
+  questionId       String    @map("question_id")
+  selectedOptionId String?   @map("selected_option_id")
+  isCorrect        Boolean   @default(false) @map("is_correct")
+  timeSpentSeconds Int?      @map("time_spent_seconds")
+  answeredAt       DateTime  @default(now()) @map("answered_at")
+
+  attempt        QuizAttempt     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question       Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  selectedOption QuestionOption? @relation(fields: [selectedOptionId], references: [id])
+
+  @@unique([attemptId, questionId])
+  @@map("quiz_answers")
+}
+
+model UserStreak {
+  id                String    @id @default(uuid())
+  userId            String    @unique @map("user_id")
+  currentStreak     Int       @default(0) @map("current_streak")
+  longestStreak     Int       @default(0) @map("longest_streak")
+  lastCompletedDate DateTime? @map("last_completed_date") @db.Date
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_streaks")
+}
+
+model Bookmark {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  questionId String   @map("question_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@map("bookmarks")
+}
+
+model UserTopicStat {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  topicId         String   @map("topic_id")
+  totalAttempted  Int      @default(0) @map("total_attempted")
+  totalCorrect    Int      @default(0) @map("total_correct")
+  accuracy        Decimal  @default(0) @db.Decimal(5, 2)
+  lastAttemptedAt DateTime @default(now()) @map("last_attempted_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, topicId])
+  @@index([userId, accuracy])
+  @@map("user_topic_stats")
+}
+
+model NotificationPreference {
+  id            String  @id @default(uuid())
+  userId        String  @unique @map("user_id")
+  dailyReminder Boolean @default(true) @map("daily_reminder")
+  streakReminder Boolean @default(true) @map("streak_reminder")
+  resultSummary Boolean @default(true) @map("result_summary")
+  reminderTime  String  @default("08:00") @map("reminder_time")
+  fcmToken      String? @map("fcm_token")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+model NotificationLog {
+  id     String             @id @default(uuid())
+  userId String             @map("user_id")
+  type   NotificationType
+  sentAt DateTime           @default(now()) @map("sent_at")
+  status NotificationStatus @default(sent)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_logs")
+}

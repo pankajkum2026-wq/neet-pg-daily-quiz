@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "NEET PG Daily Quiz",
+    "slug": "neet-pg-daily-quiz",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "neetpgquiz",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dbmci.neetpgquiz"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#1e3a5f"
+      },
+      "package": "com.dbmci.neetpgquiz"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
