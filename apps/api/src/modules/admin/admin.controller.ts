@@ -26,6 +26,11 @@ export class AdminController {
     return this.adminService.publishQuestion(id);
   }
 
+  @Get('daily-quizzes')
+  listDailyQuizzes() {
+    return this.adminService.listDailyQuizzes();
+  }
+
   @Post('daily-quizzes')
   createDailyQuiz(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     const input = createDailyQuizSchema.parse(body);

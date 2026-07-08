@@ -91,3 +91,38 @@ export interface HomeScreenDto {
     attemptId: string | null;
   };
 }
+
+export interface SubjectPerformanceDto {
+  subjectId: string;
+  subjectName: string;
+  totalAttempted: number;
+  totalCorrect: number;
+  accuracy: number;
+}
+
+export interface AnalyticsDto {
+  weeklyAccuracy: number;
+  currentStreak: number;
+  longestStreak: number;
+  quizzesCompleted: number;
+  averageScore: number;
+  weakSubjects: SubjectPerformanceDto[];
+  strongSubjects: SubjectPerformanceDto[];
+}
+
+export interface BookmarkDto {
+  id: string;
+  questionId: string;
+  stem: string;
+  topicName: string;
+  subjectName: string;
+  createdAt: string;
+}
+
+export interface RetryQuestionDto extends QuestionDto {
+  previousAnswer: {
+    selectedOptionId: string | null;
+    isCorrect: boolean;
+  };
+  feedback: QuestionFeedbackDto;
+}

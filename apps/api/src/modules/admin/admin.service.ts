@@ -76,6 +76,16 @@ export class AdminService {
     });
   }
 
+  async listDailyQuizzes() {
+    return this.prisma.dailyQuiz.findMany({
+      orderBy: { quizDate: 'desc' },
+      take: 30,
+      include: {
+        _count: { select: { questions: true, attempts: true } },
+      },
+    });
+  }
+
   async getDashboardStats() {
     const [totalQuestions, publishedQuestions, totalQuizzes, totalAttempts, totalUsers] =
       await Promise.all([

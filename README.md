@@ -57,6 +57,9 @@ pnpm dev
 | GET | `/attempts/:id/results` | Score, weak/strong topics, feedback |
 | GET | `/attempts/history` | Past quiz attempts |
 | GET | `/streaks/me` | Current streak data |
+| GET | `/analytics/me` | Weekly accuracy, weak/strong subjects |
+| GET/POST/DELETE | `/bookmarks` | Bookmark questions |
+| GET | `/attempts/:id/incorrect` | Retry incorrect questions |
 
 ## Dev Authentication
 

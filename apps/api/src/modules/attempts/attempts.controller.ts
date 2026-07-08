@@ -63,6 +63,11 @@ export class AttemptsController {
     return this.attemptsService.getHistory(user.id);
   }
 
+  @Get(':id/incorrect')
+  getIncorrect(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.attemptsService.getIncorrectQuestions(user.id, id);
+  }
+
   @Get(':id')
   getOne(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.attemptsService.getAttempt(user.id, id);

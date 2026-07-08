@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,21 +9,21 @@ import {
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import type { QuestionDto } from '@repo/shared';
+import type { QuestionFeedbackDto } from '@repo/shared';
 import { api, type AttemptData } from '@/services/api';
-
-interface AttemptDataWithQuestions extends AttemptData {
-  questions: QuestionDto[];
-}
 
 export default function QuizScreen() {
   const { attemptId } = useLocalSearchParams<{ attemptId: string }>();
   const router = useRouter();
-  const [attempt, setAttempt] = useState<AttemptDataWithQuestions | null>(null);
+  const [attempt, setAttempt] = useState<AttemptData | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<QuestionFeedbackDto | null>(null);
+  const [answeredIds, setAnsweredIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const startTimeRef = useRef<Date | null>(null);
 
   useEffect(() => {
     if (!attemptId) return;
@@ -32,56 +32,77 @@ export default function QuizScreen() {
       .then((data) => {
         setAttempt(data);
         setCurrentIndex(data.currentQuestionIndex ?? 0);
-        const existing = data.answers?.find(
-          (a) => a.questionId === data.questions[data.currentQuestionIndex ?? 0]?.id,
-        );
+        const answered = new Set(data.answers.map((a) => a.questionId));
+        setAnsweredIds(answered);
+        startTimeRef.current = new Date(data.startedAt);
+        const idx = data.currentQuestionIndex ?? 0;
+        const existing = data.answers.find((a) => a.questionId === data.questions[idx]?.id);
         setSelectedOption(existing?.selectedOptionId ?? null);
+        if (existing?.selectedOptionId) {
+          setAnsweredIds((prev) => new Set(prev).add(existing.questionId));
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [attemptId]);
 
+  useEffect(() => {
+    if (!startTimeRef.current) return;
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startTimeRef.current!.getTime()) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [attempt]);
+
   const saveAnswer = useCallback(
-    async (questionId: string, optionId: string | null, index: number) => {
-      if (!attemptId) return;
-      await api.updateAttempt(attemptId, {
+    async (questionId: string, optionId: string, index: number) => {
+      if (!attemptId) return null;
+      const result = await api.updateAttempt(attemptId, {
         currentQuestionIndex: index,
         answers: [{ questionId, selectedOptionId: optionId }],
       });
+      setAttempt(result);
+      return result.feedback?.[0] ?? null;
     },
     [attemptId],
   );
 
-  const handleSelect = (optionId: string) => {
+  const handleSelect = async (optionId: string) => {
+    if (!attempt || feedback) return;
+    const question = attempt.questions[currentIndex];
+    if (answeredIds.has(question.id)) return;
+
     setSelectedOption(optionId);
-    if (attempt) {
-      const question = attempt.questions[currentIndex];
-      saveAnswer(question.id, optionId, currentIndex);
+    const fb = await saveAnswer(question.id, optionId, currentIndex);
+    if (fb) {
+      setFeedback(fb);
+      setAnsweredIds((prev) => new Set(prev).add(question.id));
     }
   };
 
-  const handleNext = async () => {
+  const handleNext = () => {
     if (!attempt) return;
+    setFeedback(null);
     if (currentIndex < attempt.questions.length - 1) {
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
-      const existing = attempt.answers?.find(
+      const existing = attempt.answers.find(
         (a) => a.questionId === attempt.questions[nextIndex].id,
       );
       setSelectedOption(existing?.selectedOptionId ?? null);
-      await saveAnswer(attempt.questions[currentIndex].id, selectedOption, nextIndex);
     }
   };
 
   const handlePrevious = () => {
     if (!attempt || currentIndex === 0) return;
+    setFeedback(null);
     const prevIndex = currentIndex - 1;
     setCurrentIndex(prevIndex);
-    const existing = attempt.answers?.find((a) => a.questionId === attempt.questions[prevIndex].id);
+    const existing = attempt.answers.find((a) => a.questionId === attempt.questions[prevIndex].id);
     setSelectedOption(existing?.selectedOptionId ?? null);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!attemptId || !attempt) return;
 
     Alert.alert('Submit Quiz', 'Are you sure you want to submit?', [
@@ -91,8 +112,6 @@ export default function QuizScreen() {
         onPress: async () => {
           setSubmitting(true);
           try {
-            const question = attempt.questions[currentIndex];
-            await saveAnswer(question.id, selectedOption, currentIndex);
             await api.submitAttempt(attemptId);
             router.replace({ pathname: '/quiz/results', params: { attemptId } });
           } catch (e) {
@@ -115,13 +134,21 @@ export default function QuizScreen() {
 
   const question = attempt.questions[currentIndex];
   const isLast = currentIndex === attempt.questions.length - 1;
+  const isAnswered = answeredIds.has(question.id);
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
 
   return (
     <View style={styles.container}>
       <View style={styles.progress}>
-        <Text style={styles.progressText}>
-          Question {currentIndex + 1} of {attempt.questions.length}
-        </Text>
+        <View style={styles.progressRow}>
+          <Text style={styles.progressText}>
+            Question {currentIndex + 1} of {attempt.questions.length}
+          </Text>
+          <Text style={styles.timer}>
+            ⏱ {minutes}:{seconds.toString().padStart(2, '0')}
+          </Text>
+        </View>
         <View style={styles.progressBar}>
           <View
             style={[
@@ -138,24 +165,52 @@ export default function QuizScreen() {
         </Text>
         <Text style={styles.stem}>{question.stem}</Text>
 
-        {question.options.map((option) => (
-          <TouchableOpacity
-            key={option.id}
-            style={[styles.option, selectedOption === option.id && styles.optionSelected]}
-            onPress={() => handleSelect(option.id)}
-          >
-            <Text
-              style={[styles.optionLabel, selectedOption === option.id && styles.optionLabelSelected]}
+        {question.options.map((option) => {
+          const isSelected = selectedOption === option.id;
+          const isCorrect = feedback?.correctOptionId === option.id;
+          const isWrong = isSelected && feedback && !feedback.isCorrect;
+
+          return (
+            <TouchableOpacity
+              key={option.id}
+              style={[
+                styles.option,
+                isSelected && !feedback && styles.optionSelected,
+                feedback && isCorrect && styles.optionCorrect,
+                feedback && isWrong && styles.optionWrong,
+              ]}
+              onPress={() => handleSelect(option.id)}
+              disabled={isAnswered}
             >
-              {option.label}
+              <Text
+                style={[
+                  styles.optionLabel,
+                  isSelected && !feedback && styles.optionLabelSelected,
+                  feedback && isCorrect && styles.optionLabelCorrect,
+                  feedback && isWrong && styles.optionLabelWrong,
+                ]}
+              >
+                {option.label}
+              </Text>
+              <Text style={styles.optionText}>{option.text}</Text>
+            </TouchableOpacity>
+          );
+        })}
+
+        {feedback && (
+          <View style={[styles.feedbackCard, feedback.isCorrect ? styles.feedbackCorrect : styles.feedbackWrong]}>
+            <Text style={styles.feedbackTitle}>
+              {feedback.isCorrect ? '✓ Correct!' : '✗ Incorrect'}
             </Text>
-            <Text
-              style={[styles.optionText, selectedOption === option.id && styles.optionTextSelected]}
-            >
-              {option.text}
-            </Text>
-          </TouchableOpacity>
-        ))}
+            <Text style={styles.feedbackExplanation}>{feedback.explanation}</Text>
+            {feedback.clinicalPearl && (
+              <Text style={styles.pearl}>💡 {feedback.clinicalPearl}</Text>
+            )}
+            {feedback.memoryTrick && (
+              <Text style={styles.trick}>🧠 {feedback.memoryTrick}</Text>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.nav}>
@@ -169,17 +224,20 @@ export default function QuizScreen() {
 
         {isLast ? (
           <TouchableOpacity
-            style={[styles.submitButton, submitting && styles.navButtonDisabled]}
+            style={[
+              styles.submitButton,
+              (submitting || answeredIds.size < attempt.questions.length) && styles.navButtonDisabled,
+            ]}
             onPress={handleSubmit}
-            disabled={submitting || !selectedOption}
+            disabled={submitting || answeredIds.size < attempt.questions.length}
           >
             <Text style={styles.submitButtonText}>{submitting ? 'Submitting...' : 'Submit'}</Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.navButton, styles.nextButton]}
+            style={[styles.navButton, styles.nextButton, !feedback && styles.navButtonDisabled]}
             onPress={handleNext}
-            disabled={!selectedOption}
+            disabled={!feedback}
           >
             <Text style={[styles.navButtonText, styles.nextButtonText]}>Next</Text>
           </TouchableOpacity>
@@ -193,7 +251,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f1f5f9' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   progress: { padding: 16, backgroundColor: '#fff' },
-  progressText: { fontSize: 14, color: '#64748b', marginBottom: 8 },
+  progressRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  progressText: { fontSize: 14, color: '#64748b' },
+  timer: { fontSize: 14, fontWeight: '600', color: '#1e3a5f' },
   progressBar: { height: 4, backgroundColor: '#e2e8f0', borderRadius: 2 },
   progressFill: { height: 4, backgroundColor: '#1e3a5f', borderRadius: 2 },
   questionArea: { flex: 1 },
@@ -211,6 +271,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   optionSelected: { borderColor: '#1e3a5f', backgroundColor: '#eff6ff' },
+  optionCorrect: { borderColor: '#16a34a', backgroundColor: '#f0fdf4' },
+  optionWrong: { borderColor: '#dc2626', backgroundColor: '#fef2f2' },
   optionLabel: {
     width: 32,
     height: 32,
@@ -224,8 +286,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   optionLabelSelected: { backgroundColor: '#1e3a5f', color: '#fff' },
+  optionLabelCorrect: { backgroundColor: '#16a34a', color: '#fff' },
+  optionLabelWrong: { backgroundColor: '#dc2626', color: '#fff' },
   optionText: { flex: 1, fontSize: 16, color: '#334155' },
-  optionTextSelected: { color: '#1e3a5f', fontWeight: '500' },
+  feedbackCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
+    borderWidth: 1,
+  },
+  feedbackCorrect: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  feedbackWrong: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  feedbackTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8, color: '#1e293b' },
+  feedbackExplanation: { fontSize: 14, color: '#334155', lineHeight: 22 },
+  pearl: { fontSize: 13, color: '#0369a1', marginTop: 8, fontStyle: 'italic' },
+  trick: { fontSize: 13, color: '#7c3aed', marginTop: 4 },
   nav: {
     flexDirection: 'row',
     justifyContent: 'space-between',

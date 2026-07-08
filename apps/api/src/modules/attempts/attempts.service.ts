@@ -75,6 +75,7 @@ export class AttemptsService {
         questionId: a.questionId,
         selectedOptionId: a.selectedOptionId,
         timeSpentSeconds: a.timeSpentSeconds,
+        isCorrect: a.isCorrect,
       })),
       questions: attempt.dailyQuiz.questions.map((dq) => ({
         id: dq.question.id,
@@ -118,6 +119,8 @@ export class AttemptsService {
       });
     }
 
+    const feedback: QuestionFeedbackDto[] = [];
+
     if (data.answers?.length) {
       for (const answer of data.answers) {
         const question = await this.prisma.question.findUnique({
@@ -151,10 +154,22 @@ export class AttemptsService {
             timeSpentSeconds: answer.timeSpentSeconds,
           },
         });
+
+        if (correctOption) {
+          feedback.push({
+            questionId: answer.questionId,
+            isCorrect,
+            correctOptionId: correctOption.id,
+            explanation: question.explanation,
+            clinicalPearl: question.clinicalPearl,
+            memoryTrick: question.memoryTrick,
+          });
+        }
       }
     }
 
-    return this.getAttempt(userId, attemptId);
+    const attemptData = await this.getAttempt(userId, attemptId);
+    return { ...attemptData, feedback };
   }
 
   async submitAttempt(userId: string, attemptId: string) {
@@ -294,6 +309,73 @@ export class AttemptsService {
       strongTopics,
       feedback,
     };
+  }
+
+  async getIncorrectQuestions(userId: string, attemptId: string) {
+    const attempt = await this.prisma.quizAttempt.findFirst({
+      where: { id: attemptId, userId, status: 'completed' },
+      include: {
+        answers: {
+          where: { isCorrect: false },
+          include: {
+            question: {
+              include: {
+                options: { orderBy: { label: 'asc' } },
+                topic: { include: { subject: true } },
+              },
+            },
+          },
+        },
+        dailyQuiz: {
+          include: {
+            questions: { select: { questionId: true, position: true } },
+          },
+        },
+      },
+    });
+
+    if (!attempt) {
+      throw new NotFoundException('Completed attempt not found');
+    }
+
+    const positionMap = new Map(
+      attempt.dailyQuiz.questions.map((q) => [q.questionId, q.position]),
+    );
+
+    return attempt.answers.map((a) => {
+      const correctOption = a.question.options.find((o) => o.isCorrect)!;
+      return {
+        id: a.question.id,
+        position: positionMap.get(a.question.id) ?? 0,
+        stem: a.question.stem,
+        imageUrl: a.question.imageUrl,
+        options: a.question.options.map((o) => ({
+          id: o.id,
+          label: o.label,
+          text: o.text,
+        })),
+        topic: {
+          id: a.question.topic.id,
+          name: a.question.topic.name,
+          subject: {
+            id: a.question.topic.subject.id,
+            name: a.question.topic.subject.name,
+          },
+        },
+        previousAnswer: {
+          selectedOptionId: a.selectedOptionId,
+          isCorrect: a.isCorrect,
+        },
+        feedback: {
+          questionId: a.questionId,
+          isCorrect: a.isCorrect,
+          correctOptionId: correctOption.id,
+          explanation: a.question.explanation,
+          clinicalPearl: a.question.clinicalPearl,
+          memoryTrick: a.question.memoryTrick,
+        },
+      };
+    });
   }
 
   async getHistory(userId: string, limit = 30) {

@@ -17,15 +17,36 @@ export default function ResultsScreen() {
   const [results, setResults] = useState<QuizResultsDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!attemptId) return;
-    api
-      .getResults(attemptId)
-      .then(setResults)
+    Promise.all([api.getResults(attemptId), api.getBookmarks()])
+      .then(([res, bookmarks]) => {
+        setResults(res);
+        setBookmarkedIds(new Set(bookmarks.map((b) => b.questionId)));
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [attemptId]);
+
+  const handleBookmark = async (questionId: string) => {
+    try {
+      if (bookmarkedIds.has(questionId)) {
+        await api.removeBookmark(questionId);
+        setBookmarkedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(questionId);
+          return next;
+        });
+      } else {
+        await api.addBookmark(questionId);
+        setBookmarkedIds((prev) => new Set(prev).add(questionId));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   if (loading || !results) {
     return (
@@ -37,7 +58,7 @@ export default function ResultsScreen() {
 
   const minutes = Math.floor(results.timeTakenSeconds / 60);
   const seconds = results.timeTakenSeconds % 60;
-  const wrongCount = results.feedback.filter((f) => !f.isCorrect).length;
+  const wrongAnswers = results.feedback.filter((f) => !f.isCorrect);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -76,28 +97,38 @@ export default function ResultsScreen() {
         </View>
       )}
 
-      {wrongCount > 0 && (
-        <TouchableOpacity style={styles.reviewButton} onPress={() => setShowFeedback(!showFeedback)}>
-          <Text style={styles.reviewButtonText}>
-            {showFeedback ? 'Hide' : 'Review'} Wrong Answers ({wrongCount})
-          </Text>
-        </TouchableOpacity>
+      {wrongAnswers.length > 0 && (
+        <>
+          <TouchableOpacity
+            style={styles.reviewButton}
+            onPress={() => router.push({ pathname: '/quiz/retry', params: { attemptId } })}
+          >
+            <Text style={styles.reviewButtonText}>Retry Wrong Answers ({wrongAnswers.length})</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.reviewButton} onPress={() => setShowFeedback(!showFeedback)}>
+            <Text style={styles.reviewButtonText}>
+              {showFeedback ? 'Hide' : 'View'} Explanations
+            </Text>
+          </TouchableOpacity>
+        </>
       )}
 
       {showFeedback &&
-        results.feedback
-          .filter((f) => !f.isCorrect)
-          .map((f) => (
-            <View key={f.questionId} style={styles.feedbackCard}>
+        wrongAnswers.map((f) => (
+          <View key={f.questionId} style={styles.feedbackCard}>
+            <View style={styles.feedbackHeader}>
               <Text style={styles.feedbackExplanation}>{f.explanation}</Text>
-              {f.clinicalPearl && (
-                <Text style={styles.pearl}>💡 {f.clinicalPearl}</Text>
-              )}
-              {f.memoryTrick && (
-                <Text style={styles.trick}>🧠 {f.memoryTrick}</Text>
-              )}
+              <TouchableOpacity onPress={() => handleBookmark(f.questionId)}>
+                <Text style={styles.bookmarkIcon}>
+                  {bookmarkedIds.has(f.questionId) ? '🔖' : '📑'}
+                </Text>
+              </TouchableOpacity>
             </View>
-          ))}
+            {f.clinicalPearl && <Text style={styles.pearl}>💡 {f.clinicalPearl}</Text>}
+            {f.memoryTrick && <Text style={styles.trick}>🧠 {f.memoryTrick}</Text>}
+          </View>
+        ))}
 
       <TouchableOpacity style={styles.homeButton} onPress={() => router.replace('/')}>
         <Text style={styles.homeButtonText}>Back to Home</Text>
@@ -149,7 +180,9 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 8,
   },
-  feedbackExplanation: { fontSize: 14, color: '#334155', lineHeight: 22 },
+  feedbackHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  feedbackExplanation: { flex: 1, fontSize: 14, color: '#334155', lineHeight: 22, marginRight: 8 },
+  bookmarkIcon: { fontSize: 24 },
   pearl: { fontSize: 13, color: '#0369a1', marginTop: 8, fontStyle: 'italic' },
   trick: { fontSize: 13, color: '#7c3aed', marginTop: 4 },
   homeButton: {
